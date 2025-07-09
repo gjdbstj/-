@@ -1,106 +1,86 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import seaborn as sns
-import folium
-from streamlit_folium import folium_static
 import plotly.express as px
-from io import BytesIO
-import base64
+import folium
+from streamlit_folium import st_folium
+from scipy.stats import pearsonr
+import io
 
-st.set_page_config(page_title="수질 오염 분석", layout="wide")
-
-st.title("📊 수질 오염 분석 대시보드")
-
-# -------------------------------
 # 1. 데이터 업로드
-# -------------------------------
-st.header("1. 데이터 업로드")
-uploaded_file = st.file_uploader("CSV 또는 Excel 파일 업로드", type=['csv', 'xlsx'])
+st.title("수질 오염물질 데이터 분석 플랫폼")
+st.sidebar.header("데이터 업로드")
+uploaded_file = st.sidebar.file_uploader("CSV 또는 Excel 파일을 업로드하세요", type=['csv', 'xlsx'])
 
 if uploaded_file:
     if uploaded_file.name.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
+    st.success("데이터 업로드 완료!")
+    st.write(df.head())
 
-    st.success("✅ 데이터 업로드 완료")
-    st.dataframe(df.head())
-
-    # -------------------------------
     # 2. 시기별·지점별 오염물질 농도 시각화
-    # -------------------------------
-    st.header("2. 시기별·지점별 오염물질 농도 시각화")
+    st.header("시기별/지점별 오염물질 농도 시각화")
+    col_date = st.selectbox("날짜 컬럼 선택", df.columns)
+    col_site = st.selectbox("측정지점 컬럼 선택", df.columns)
+    col_pollutant = st.selectbox("오염물질 컬럼 선택", [c for c in df.columns if c not in [col_date, col_site]])
+    st.write(f"선택한 오염물질: {col_pollutant}")
 
-    date_col = st.selectbox("📅 날짜 컬럼 선택", df.columns)
-    loc_col = st.selectbox("📍 지점 컬럼 선택", df.columns)
-    value_col = st.selectbox("🧪 오염물질 농도 컬럼 선택", df.columns)
+    fig = px.line(df, x=col_date, y=col_pollutant, color=col_site, title="오염물질 농도 추이")
+    st.plotly_chart(fig)
 
-    fig = px.line(df, x=date_col, y=value_col, color=loc_col, title="농도 변화 추이")
-    st.plotly_chart(fig, use_container_width=True)
-
-    # -------------------------------
-    # 3. 지도에서 배출원 시각화
-    # -------------------------------
-    st.header("3. 주요 배출원 위치 시각화")
-
-    if {'위도', '경도', '배출량', '배출원명'}.issubset(df.columns):
-        m = folium.Map(location=[df['위도'].mean(), df['경도'].mean()], zoom_start=8)
-        for i, row in df.iterrows():
+    # 3. 지도상 주요 배출원 시각화
+    st.header("주요 배출원 위치 및 배출량 시각화")
+    if {'위도', '경도', '배출원명', '배출량'}.issubset(df.columns):
+        m = folium.Map(location=[df['위도'].mean(), df['경도'].mean()], zoom_start=10)
+        for idx, row in df.iterrows():
             folium.CircleMarker(
-                location=(row['위도'], row['경도']),
-                radius=row['배출량'] / 10,
-                color='red',
-                fill=True,
-                fill_opacity=0.6,
-                popup=f"{row['배출원명']} (배출량: {row['배출량']})"
+                location=[row['위도'], row['경도']],
+                radius=5 + row['배출량'] / 10,
+                popup=f"{row['배출원명']}<br>배출량: {row['배출량']}",
+                color='red'
             ).add_to(m)
-        folium_static(m)
+        st_folium(m, width=700)
     else:
-        st.warning("⚠️ '위도', '경도', '배출량', '배출원명' 컬럼이 필요합니다.")
+        st.info("지도 시각화를 위해 '위도', '경도', '배출원명', '배출량' 컬럼이 필요합니다.")
 
-    # -------------------------------
-    # 4. 농도 초과 지점 탐지 및 알림
-    # -------------------------------
-    st.header("4. 농도 초과 지점 자동 탐지")
+    # 4. 농도 변화 추이 및 초과 지점 자동 탐지(알림)
+    st.header("농도 초과 지점 자동 탐지")
+    threshold = st.number_input("기준치(예: 환경기준) 입력", value=float(df[col_pollutant].mean()))
+    exceed = df[df[col_pollutant] > threshold]
+    if not exceed.empty:
+        st.warning(f"기준치 초과 지점 {len(exceed)}건 발견!")
+        st.dataframe(exceed[[col_date, col_site, col_pollutant]])
+    else:
+        st.success("기준치 초과 지점이 없습니다.")
 
-    threshold = st.slider("🔔 초과 기준값 설정", min_value=0.0, max_value=500.0, value=50.0, step=0.1)
+    # 5. 오염물질별 상관관계 분석 및 리포트 생성
+    st.header("오염물질별 상관관계 분석")
+    pollutant_cols = st.multiselect("상관관계 분석할 오염물질 컬럼 선택", [c for c in df.columns if df[c].dtype in [np.float64, np.int64]])
+    if len(pollutant_cols) >= 2:
+        corr = df[pollutant_cols].corr()
+        st.write("상관계수 행렬:")
+        st.dataframe(corr)
+        fig_corr, ax = plt.subplots()
+        sns.heatmap(corr, annot=True, cmap='coolwarm', ax=ax)
+        st.pyplot(fig_corr)
 
-    exceeded = df[df[value_col] > threshold]
-    st.write(f"🚨 초과 지점 수: {len(exceeded)}개")
-    st.dataframe(exceeded)
-
-    # -------------------------------
-    # 5. 오염물질 간 상관관계 분석
-    # -------------------------------
-    st.header("5. 오염물질 간 상관관계 분석")
-
-    selected_cols = st.multiselect("상관관계를 분석할 수질 지표 선택", df.select_dtypes(include=np.number).columns)
-
-    if len(selected_cols) >= 2:
-        corr_matrix = df[selected_cols].corr()
-        st.write("📌 상관계수 행렬:")
-        st.dataframe(corr_matrix)
-
-        fig_corr = sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
-        st.pyplot(fig_corr.figure)
-
-    # -------------------------------
-    # 6. 리포트 생성 및 다운로드
-    # -------------------------------
-    st.header("6. 리포트 다운로드")
-
-    def convert_df(df_report):
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_report.to_excel(writer, index=False, sheet_name='Report')
-        output.seek(0)
-        b64 = base64.b64encode(output.read()).decode()
-        href = f'<a href="data:application/octet-stream;base64,{b64}" download="report.xlsx">📥 리포트 다운로드</a>'
-        return href
-
-    if st.button("📄 리포트 생성"):
-        st.markdown(convert_df(df), unsafe_allow_html=True)
+    # 6. 데이터 요약 리포트 다운로드
+    st.header("데이터 요약 리포트 다운로드")
+    summary = df.describe()
+    st.dataframe(summary)
+    buf = io.BytesIO()
+    summary.to_csv(buf)
+    st.download_button(
+        label="요약 리포트 다운로드(CSV)",
+        data=buf.getvalue(),
+        file_name="summary_report.csv",
+        mime="text/csv"
+    )
 
 else:
-    st.info("📁 분석할 데이터를 먼저 업로드해주세요.")
+    st.info("먼저 데이터를 업로드하세요.")
+
