@@ -1,93 +1,110 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import folium
 from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
 import plotly.express as px
 from fpdf import FPDF
 
-st.title("💧 수질 오염 데이터 분석")
+st.set_page_config(layout="wide")
+st.title("💧 수질 오염 데이터 분석 & 지도 시각화")
 
-# --------------------------------------------
-# 1. 데이터 업로드 or 샘플
+# 1. 데이터 업로드
 st.sidebar.title("📁 데이터 업로드")
 uploaded_file = st.sidebar.file_uploader("CSV 또는 Excel 업로드", type=['csv', 'xlsx'])
+
+# 샘플 데이터 함수 (업로드 없을 때 보여주기용)
+@st.cache_data
+def load_sample_data():
+    data = {
+        '측정일자': pd.date_range(start='2024-01-01', periods=5),
+        '측정지점명': ['A', 'B', 'C', 'D', 'E'],
+        '위도': [37.56, 37.55, 37.57, 37.54, 37.58],
+        '경도': [126.97, 126.98, 126.99, 126.96, 127.00],
+        '총인': [0.3, 0.7, 0.2, 0.6, 0.8],
+        'BOD': [2.0, 3.5, 1.8, 2.5, 4.0],
+        'COD': [5.0, 6.0, 4.5, 5.5, 7.0],
+    }
+    df = pd.DataFrame(data)
+    return df
 
 if uploaded_file:
     if uploaded_file.name.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
-    st.info("✅ 업로드한 파일로 분석 중입니다.")
 else:
-    st.info("⚠️ 데이터가 없으므로 샘플 데이터를 사용합니다.")
-    # 샘플 데이터 생성
-    sample_data = {
-        '측정일자': pd.date_range(start='2024-01-01', periods=10).tolist() * 3,
-        '측정지점명': ['한강A'] * 10 + ['중랑천B'] * 10 + ['탄천C'] * 10,
-        '위도': [37.55]*10 + [37.58]*10 + [37.47]*10,
-        '경도': [126.98]*10 + [127.04]*10 + [127.07]*10,
-        '총인': np.random.uniform(0.2, 1.0, 30),
-        'BOD': np.random.uniform(1.0, 3.5, 30),
-        'COD': np.random.uniform(1.0, 5.0, 30),
-    }
-    df = pd.DataFrame(sample_data)
+    st.info("샘플 데이터로 예시를 보여드립니다. 실제 데이터로 분석하려면 좌측에서 업로드하세요.")
+    df = load_sample_data()
 
-# --------------------------------------------
-# 2. 데이터프레임 출력
-st.subheader("📄 데이터 미리보기")
-st.dataframe(df.head())
-
-# --------------------------------------------
-# 3. 시계열 그래프
-pollutant = st.sidebar.selectbox("오염물질 선택", df.columns[4:])
+# 컬럼명 날짜 변환
 date_col = '측정일자'
-site_col = '측정지점명'
-
 df[date_col] = pd.to_datetime(df[date_col])
-start_date, end_date = st.sidebar.date_input("기간 선택", [df[date_col].min(), df[date_col].max()])
-df_filtered = df[(df[date_col] >= pd.to_datetime(start_date)) & (df[date_col] <= pd.to_datetime(end_date))]
 
-fig = px.line(df_filtered, x=date_col, y=pollutant, color=site_col, markers=True)
-st.subheader("📈 오염물질 시계열 변화")
-st.plotly_chart(fig)
+# 오염물질 선택 (날짜, 지점명, 위도, 경도, 오염물질 포함 컬럼 확인)
+possible_pollutants = [col for col in df.columns if col not in ['측정일자', '측정지점명', '위도', '경도']]
+pollutant = st.sidebar.selectbox("오염물질 선택", possible_pollutants)
 
-# --------------------------------------------
-# 4. 지도 시각화
-st.subheader("🗺️ 측정 지점 지도 보기")
-map_center = [df['위도'].mean(), df['경도'].mean()]
-map_ = folium.Map(location=map_center, zoom_start=11)
-marker_cluster = MarkerCluster().add_to(map_)
+# 기간 선택
+min_date = df[date_col].min()
+max_date = df[date_col].max()
+start_date, end_date = st.sidebar.date_input("기간 선택", [min_date, max_date], min_value=min_date, max_value=max_date)
 
-for _, row in df.iterrows():
-    folium.CircleMarker(
-        location=[row['위도'], row['경도']],
-        radius=7,
-        popup=f"{row[site_col]}<br>{pollutant}: {row[pollutant]:.2f}",
-        color="red" if row[pollutant] > 0.5 else "green",
-        fill=True,
-    ).add_to(marker_cluster)
+# 기준치 설정
+threshold = st.sidebar.number_input("기준치 설정", min_value=0.0, value=0.5, step=0.1)
 
-st_folium(map_, width=700)
+@st.cache_data
+def filter_data(df, start_date, end_date, date_col):
+    return df[(df[date_col] >= pd.to_datetime(start_date)) & (df[date_col] <= pd.to_datetime(end_date))]
 
-# --------------------------------------------
-# 5. 기준 초과 탐지
-threshold = st.sidebar.number_input("기준치 설정", min_value=0.0, value=0.5)
-exceed = df[df[pollutant] > threshold]
-st.subheader("📌 기준치 초과 탐지")
-st.write(f"총 **{len(exceed)}건** 기준 초과")
-st.dataframe(exceed[[date_col, site_col, pollutant]])
+filtered_df = filter_data(df, start_date, end_date, date_col)
 
-# --------------------------------------------
-# 6. PDF 리포트 생성
+# Plotly 그래프 생성 캐싱
+@st.cache_data
+def create_line_chart(data, date_col, pollutant, site_col):
+    fig = px.line(data, x=date_col, y=pollutant, color=site_col, markers=True)
+    fig.update_layout(autosize=True)
+    return fig
+
+fig = create_line_chart(filtered_df, date_col, pollutant, '측정지점명')
+st.subheader("📈 시계열 오염물질 농도 변화")
+st.plotly_chart(fig, use_container_width=True)
+
+# folium 지도 생성 캐싱
+@st.cache_resource
+def create_folium_map(data, lat_col='위도', lon_col='경도', pollutant_col='총인', threshold=0.5):
+    center = [data[lat_col].mean(), data[lon_col].mean()]
+    m = folium.Map(location=center, zoom_start=11)
+    marker_cluster = MarkerCluster().add_to(m)
+    for _, row in data.iterrows():
+        color = 'red' if row[pollutant_col] > threshold else 'green'
+        folium.CircleMarker(
+            location=[row[lat_col], row[lon_col]],
+            radius=7,
+            popup=f"{row['측정지점명']}<br>{pollutant_col}: {row[pollutant_col]:.2f}",
+            color=color,
+            fill=True,
+            fill_opacity=0.7
+        ).add_to(marker_cluster)
+    return m
+
+st.subheader("🗺️ 측정 지점 지도 시각화")
+map_ = create_folium_map(filtered_df, pollutant_col=pollutant, threshold=threshold)
+st_folium(map_, width=700, height=500, key="map_folium")
+
+# 기준치 초과 데이터 표출
+exceed = filtered_df[filtered_df[pollutant] > threshold]
+st.subheader(f"⚠️ 기준치({threshold}) 초과 데이터: 총 {len(exceed)}건")
+st.dataframe(exceed[[date_col, '측정지점명', pollutant]])
+
+# PDF 리포트 생성 (간단 예시)
 if st.sidebar.button("리포트 생성"):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"수질 오염 데이터 분석 리포트", ln=True, align='C')
-    pdf.cell(200, 10, txt=f"오염물질: {pollutant}", ln=True)
-    pdf.cell(200, 10, txt=f"기준치: {threshold}", ln=True)
-    pdf.cell(200, 10, txt=f"기준 초과 건수: {len(exceed)}", ln=True)
+    pdf.cell(200, 10, txt="수질 오염 데이터 분석 리포트", ln=True, align='C')
+    pdf.cell(200, 10, txt=f"분석기간: {start_date} ~ {end_date}", ln=True)
+    pdf.cell(200, 10, txt=f"선택 오염물질: {pollutant}", ln=True)
+    pdf.cell(200, 10, txt=f"기준치 초과 건수: {len(exceed)}건", ln=True)
     pdf.output("water_quality_report.pdf")
-    st.success("리포트가 생성되었습니다.")
+    st.success("리포트가 생성되었습니다. (water_quality_report.pdf)")
