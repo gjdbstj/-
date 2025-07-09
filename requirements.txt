@@ -1,8 +1,6 @@
-streamlit==1.46.1
+streamlit
 pandas
-numpy
 plotly
+fpdf
 folium
 streamlit-folium
-fpdf
-matplotlib
