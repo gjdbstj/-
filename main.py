@@ -41,7 +41,7 @@ else:
 date_col = '측정일자'
 df[date_col] = pd.to_datetime(df[date_col])
 
-# 오염물질 선택 (날짜, 지점명, 위도, 경도, 오염물질 포함 컬럼 확인)
+# 오염물질 선택 (날짜, 지점명, 위도, 경도 제외)
 possible_pollutants = [col for col in df.columns if col not in ['측정일자', '측정지점명', '위도', '경도']]
 pollutant = st.sidebar.selectbox("오염물질 선택", possible_pollutants)
 
@@ -59,36 +59,49 @@ def filter_data(df, start_date, end_date, date_col):
 
 filtered_df = filter_data(df, start_date, end_date, date_col)
 
-# Plotly 그래프 생성 캐싱
+# Plotly 라인 차트 생성 (각 지점별 농도 시간 변화)
 @st.cache_data
 def create_line_chart(data, date_col, pollutant, site_col):
-    fig = px.line(data, x=date_col, y=pollutant, color=site_col, markers=True)
-    fig.update_layout(autosize=True)
+    # site_col별로 시간 순으로 그리도록
+    fig = px.line(
+        data.sort_values(by=[site_col, date_col]),
+        x=date_col,
+        y=pollutant,
+        color=site_col,
+        markers=True,
+        title=f"{pollutant} 농도 시계열 변화"
+    )
+    fig.update_layout(autosize=True, xaxis_title="측정일자", yaxis_title=f"{pollutant} 농도")
     return fig
 
 fig = create_line_chart(filtered_df, date_col, pollutant, '측정지점명')
-st.subheader("📈 시계열 오염물질 농도 변화")
+st.subheader("📈 시계열 오염물질 농도 변화 (지점별)")
 st.plotly_chart(fig, use_container_width=True)
 
-# folium 지도 생성 캐싱
+# Folium 지도 생성 - 각 지점 위치 표시 및 농도 표시
 @st.cache_resource
 def create_folium_map(data, lat_col='위도', lon_col='경도', pollutant_col='총인', threshold=0.5):
     center = [data[lat_col].mean(), data[lon_col].mean()]
     m = folium.Map(location=center, zoom_start=11)
     marker_cluster = MarkerCluster().add_to(m)
-    for _, row in data.iterrows():
+
+    # 중복 지점이 있을 수 있으므로, 측정지점별 최근 데이터나 평균 데이터 선택 가능
+    # 여기선 각 지점의 평균 농도 사용
+    grouped = data.groupby(['측정지점명', lat_col, lon_col])[pollutant_col].mean().reset_index()
+
+    for _, row in grouped.iterrows():
         color = 'red' if row[pollutant_col] > threshold else 'green'
         folium.CircleMarker(
             location=[row[lat_col], row[lon_col]],
-            radius=7,
-            popup=f"{row['측정지점명']}<br>{pollutant_col}: {row[pollutant_col]:.2f}",
+            radius=10,
+            popup=folium.Popup(f"{row['측정지점명']}<br>{pollutant_col}: {row[pollutant_col]:.2f}", max_width=200),
             color=color,
             fill=True,
             fill_opacity=0.7
         ).add_to(marker_cluster)
     return m
 
-st.subheader("🗺️ 측정 지점 지도 시각화")
+st.subheader("🗺️ 측정 지점 지도 시각화 (평균 농도 기준)")
 map_ = create_folium_map(filtered_df, pollutant_col=pollutant, threshold=threshold)
 st_folium(map_, width=700, height=500, key="map_folium")
 
@@ -108,3 +121,4 @@ if st.sidebar.button("리포트 생성"):
     pdf.cell(200, 10, txt=f"기준치 초과 건수: {len(exceed)}건", ln=True)
     pdf.output("water_quality_report.pdf")
     st.success("리포트가 생성되었습니다. (water_quality_report.pdf)")
+
