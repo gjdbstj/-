@@ -69,3 +69,20 @@ if uploaded_file:
 
 else:
     st.info("좌측 사이드바에서 데이터를 업로드하세요.")
+
+import streamlit as st
+import folium
+from folium.plugins import MarkerCluster
+from streamlit_folium import st_folium
+
+st.title("서울 마커 클러스터 지도")
+
+# folium 지도 생성
+m = folium.Map(location=[37.5665, 126.9780], zoom_start=12)
+marker_cluster = MarkerCluster().add_to(m)
+
+# 마커 추가
+folium.Marker([37.5665, 126.9780], popup="서울").add_to(marker_cluster)
+
+# Streamlit 앱에 지도 표시
+st_folium(m, width=700, height=500)
