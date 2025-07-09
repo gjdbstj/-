@@ -1,10 +1,21 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
 import folium
 from folium.plugins import MarkerCluster
-from fpdf import FPDF
+from streamlit_folium import st_folium
+
+# 제목
+st.title("서울 마커 클러스터 지도")
+
+# 지도 객체 생성
+m = folium.Map(location=[37.5665, 126.9780], zoom_start=12)
+marker_cluster = MarkerCluster().add_to(m)
+
+# 마커 추가
+folium.Marker([37.5665, 126.9780], popup="서울").add_to(marker_cluster)
+
+# Streamlit 앱에 지도 렌더링
+st_folium(m, width=700, height=500)
+
 
 # 1. 데이터 업로드
 st.sidebar.title("📁 데이터 업로드")
