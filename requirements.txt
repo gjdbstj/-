@@ -4,3 +4,4 @@ plotly
 fpdf
 folium
 streamlit-folium
+requests
